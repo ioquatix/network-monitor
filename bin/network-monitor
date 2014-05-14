@@ -1,0 +1,67 @@
+#!/usr/bin/env ruby
+# monitor.rb - a simple script to monitor SNMP port status and utilization
+# Copyright (c) 2008 Samuel Williams. Released under the GNU GPLv3.
+
+require 'trollop'
+
+require_relative '../lib/network/monitor'
+
+opts = Trollop::options do
+	opt :database, "Path to sqlite3 database", :type => String, :default => "ports.sqlite3"
+	opt :delay, "The delay between subsequent checks", :type => Float, :default => 10.0
+	opt :hosts, "The hosts configuration file", :type => String, :default => "hosts.conf"
+end
+
+$hosts = YAML::load_file(opts[:hosts])
+
+ActiveRecord::Base.establish_connection(
+:adapter => 'sqlite3',
+:database  => opts[:database]
+)
+
+unless File.exist? opts[:database]
+	Network::Monitor.migrate_database!
+end
+
+# Currently unused, but gets names from hardware if possible:
+def fetch_names(hosts)
+	puts "Fetching names..."
+	hosts.each do |h|
+		SNMP::Manager.open(:Host => h, :Version => :SNMPv1) do |manager|
+			response = manager.get(["sysDescr.0", "sysName.0"])
+      
+			name = response.varbind_list[1].value.to_s + ' (' + response.varbind_list[0].value.to_s + ')'
+      
+			$names[h] = name
+		end
+	end
+	puts "Done."
+end
+
+begin
+	while true
+		start_time = Time.now
+	
+		$hosts.each do |host|
+			begin
+				Network::Monitor::Interface.query(host)
+			rescue SNMP::RequestTimeout
+				$stderr.puts "#{host}: Timed out when requesting SNMP data..."
+			rescue Errno::EHOSTUNREACH
+				$stderr.puts "#{host}: Error - host unreachable!"
+			rescue Errno::EHOSTDOWN
+				$stderr.puts "#{host}: Error - host unreachable!"
+			end
+		end
+	
+		puts
+		Network::Monitor::Interface.print_statistics($stdout)
+	
+		end_time = Time.now
+	
+		duration = end_time - start_time
+		sleep(opts[:delay] - duration) if duration < opts[:delay]
+	end
+rescue Interrupt
+	puts "Exiting..."
+end
