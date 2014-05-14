@@ -1,0 +1,22 @@
+#!/usr/bin/env ruby
+
+require_relative '../lib/network/monitor'
+
+Network::Monitor::Interface.all.group("host, ifIndex").order("host, ifindex").each do |iface|
+	puts "Scanning #{iface.host}-#{iface.ifIndex}"
+	records = Network::Monitor::Interface.where("host = ? and ifIndex = ?", iface.host, iface.ifIndex).order("created_at desc")
+  
+	records.each_with_index do |r,i|
+		next if i == 0
+    
+		r1, r2 = r, records[i-1]
+    
+		s = r1.statistics(r2)
+    
+		if s[:ifInUsage] > 1.0 || s[:ifOutUsage] > 1.0
+			puts YAML::dump(r1)
+			puts YAML::dump(r2)
+			puts YAML::dump(s)
+		end
+	end
+end
